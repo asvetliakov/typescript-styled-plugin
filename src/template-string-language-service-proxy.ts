@@ -36,7 +36,7 @@ class StandardTemplateContext implements TemplateContext {
     constructor(
         public readonly fileName: string,
         public readonly node: ts.Node,
-        private readonly helper: ScriptSourceHelper,
+        private readonly helper: ScriptSourceHelper
     ) { }
 
     public toOffset(position: ts.LineAndCharacter): number {
@@ -67,30 +67,27 @@ function relative(from: ts.LineAndCharacter, to: ts.LineAndCharacter): ts.LineAn
     };
 }
 
-/**
- * 
- */
 export interface TemplateStringLanguageService {
     getCompletionsAtPosition?(
         body: string,
         position: ts.LineAndCharacter,
-        context: TemplateContext,
+        context: TemplateContext
     ): ts.CompletionInfo;
 
     getQuickInfoAtPosition?(
         body: string,
         position: ts.LineAndCharacter,
-        context: TemplateContext,
+        context: TemplateContext
     ): ts.QuickInfo | undefined;
 
     getSyntacticDiagnostics?(
         body: string,
-        context: TemplateContext,
+        context: TemplateContext
     ): ts.Diagnostic[];
 
     getSemanticDiagnostics?(
         body: string,
-        context: TemplateContext,
+        context: TemplateContext
     ): ts.Diagnostic[];
 }
 
@@ -145,8 +142,8 @@ class TemplateLanguageServiceProxyBuilder {
                         return Object.assign({}, quickInfo, {
                             textSpan: {
                                 start: quickInfo.textSpan.start + node.getStart() + 1,
-                                length: quickInfo.textSpan.length
-                            }
+                                length: quickInfo.textSpan.length,
+                            },
                         });
                     }
                     return delegate(fileName, position);
@@ -219,10 +216,15 @@ class TemplateLanguageServiceProxyBuilder {
         return node;
     }
 
-    private getAllTemplateNodes(fileName: string): ts.TemplateExpression[] {
-        return this.helper
-            .getAllNodes(fileName, node => this.getValidTemplateNode(node) !== undefined)
-            .map(node => this.getValidTemplateNode(node) as ts.TemplateExpression);
+    private getAllValidTemplateNodes(fileName: string): ts.TemplateLiteral[] {
+        const out: ts.TemplateLiteral[] = [];
+        for (const node of this.helper.getAllNodes(fileName, n => this.getValidTemplateNode(n) !== undefined)) {
+            const validNode = this.getValidTemplateNode(node);
+            if (validNode) {
+                out.push(validNode);
+            }
+        }
+        return out;
     }
 
     private getValidTemplateNode(node: ts.Node | undefined): ts.TemplateLiteral | undefined {
@@ -267,7 +269,7 @@ class TemplateLanguageServiceProxyBuilder {
         }
 
         const stringStart = node.getStart() + 1;
-        let contents = literalContents; 
+        let contents = literalContents;
         let nodeStart = node.head.end - stringStart - 2;
         for (const child of node.templateSpans.map(x => x.literal)) {
             const start = child.getStart() - stringStart + 1;
@@ -284,7 +286,7 @@ class TemplateLanguageServiceProxyBuilder {
     ) {
         const baseDiagnostics = delegate(fileName);
         const templateDiagnostics: ts.Diagnostic[] = [];
-        for (const templateNode of this.getAllTemplateNodes(fileName)) {
+        for (const templateNode of this.getAllValidTemplateNodes(fileName)) {
             const contents = this.getContents(templateNode);
             const diagnostics: ts.Diagnostic[] = implementation(
                 contents,
@@ -311,9 +313,6 @@ class TemplateLanguageServiceProxyBuilder {
     }
 }
 
-/**
- * 
- */
 export function createTemplateStringLanguageServiceProxy(
     languageService: ts.LanguageService,
     helper: ScriptSourceHelper,

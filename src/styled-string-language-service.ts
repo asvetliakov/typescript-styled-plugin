@@ -4,7 +4,7 @@
 // Original code forked from https://github.com/Quramy/ts-graphql-plugin
 
 import * as ts from 'typescript/lib/tsserverlibrary';
-import { getSCSSLanguageService, Stylesheet, LanguageService } from 'vscode-css-languageservice';
+import { getSCSSLanguageService, getCSSLanguageService, Stylesheet, LanguageService } from 'vscode-css-languageservice';
 import * as vscode from 'vscode-languageserver-types';
 import { TemplateContext, TemplateStringLanguageService } from './template-string-language-service-proxy';
 import * as config from './config';
@@ -12,42 +12,50 @@ import { TsStyledPluginConfiguration } from './configuration';
 
 const wrapperPre = ':root{\n';
 
-
 export default class VscodeLanguageServiceAdapter implements TemplateStringLanguageService {
 
-    private _languageService?: LanguageService;
+    private _cssLanguageService?: LanguageService;
+    private _scssLanguageService?: LanguageService;
 
     constructor(
         private readonly configuration: TsStyledPluginConfiguration
     ) { }
 
-    private get languageService(): LanguageService {
-        if (!this._languageService) {
-            this._languageService = getSCSSLanguageService();
-            this._languageService.configure(this.configuration);
+    private get cssLanguageService(): LanguageService {
+        if (!this._cssLanguageService) {
+            this._cssLanguageService = getCSSLanguageService();
+            this._cssLanguageService.configure(this.configuration);
         }
-        return this._languageService;
+        return this._cssLanguageService;
+    }
+
+    private get scssLanguageService(): LanguageService {
+        if (!this._scssLanguageService) {
+            this._scssLanguageService = getSCSSLanguageService();
+            this._scssLanguageService.configure(this.configuration);
+        }
+        return this._scssLanguageService;
     }
 
     public getCompletionsAtPosition(
         contents: string,
         position: ts.LineAndCharacter,
-        context: TemplateContext,
+        context: TemplateContext
     ): ts.CompletionInfo {
         const doc = this.createVirtualDocument(contents, context);
-        const stylesheet = this.languageService.parseStylesheet(doc);
-        const items = this.languageService.doComplete(doc, this.toVirtualDocPosition(position), stylesheet);
+        const stylesheet = this.cssLanguageService.parseStylesheet(doc);
+        const items = this.cssLanguageService.doComplete(doc, this.toVirtualDocPosition(position), stylesheet);
         return translateCompletionItems(items);
     }
 
     public getQuickInfoAtPosition(
         contents: string,
         position: ts.LineAndCharacter,
-        context: TemplateContext,
+        context: TemplateContext
     ): ts.QuickInfo | undefined {
         const doc = this.createVirtualDocument(contents, context);
-        const stylesheet = this.languageService.parseStylesheet(doc);
-        const hover = this.languageService.doHover(doc, this.toVirtualDocPosition(position), stylesheet);
+        const stylesheet = this.cssLanguageService.parseStylesheet(doc);
+        const hover = this.cssLanguageService.doHover(doc, this.toVirtualDocPosition(position), stylesheet);
         if (hover) {
             return this.translateHover(hover, this.toVirtualDocPosition(position), context);
         }
@@ -56,22 +64,22 @@ export default class VscodeLanguageServiceAdapter implements TemplateStringLangu
 
     public getSemanticDiagnostics(
         contents: string,
-        context: TemplateContext,
+        context: TemplateContext
     ): ts.Diagnostic[] {
         const doc = this.createVirtualDocument(contents, context);
-        const stylesheet = this.languageService.parseStylesheet(doc);
+        const stylesheet = this.scssLanguageService.parseStylesheet(doc);
         return this.translateDiagnostics(
-            this.languageService.doValidation(doc, stylesheet),
+            this.scssLanguageService.doValidation(doc, stylesheet),
             doc,
-            context);
+            context,
+        contents).filter(x => !!x) as ts.Diagnostic[];
     }
-
 
     private createVirtualDocument(
         contents: string,
-        context: TemplateContext,
+        context: TemplateContext
     ): vscode.TextDocument {
-        contents = `${wrapperPre}${contents}}`;
+        contents = `${wrapperPre}${contents}\n}`;
         return {
             uri: 'untitled://embedded.scss',
             languageId: 'scss',
@@ -82,7 +90,7 @@ export default class VscodeLanguageServiceAdapter implements TemplateStringLangu
                 return this.toVirtualDocPosition(pos);
             },
             offsetAt: (p: vscode.Position) => {
-                const offset = context.toOffset(this.fromVirtualDocPosition(p))
+                const offset = context.toOffset(this.fromVirtualDocPosition(p));
                 return this.toVirtualDocOffset(offset);
             },
             lineCount: contents.split(/n/g).length + 1,
@@ -115,19 +123,30 @@ export default class VscodeLanguageServiceAdapter implements TemplateStringLangu
         diagnostics: vscode.Diagnostic[],
         doc: vscode.TextDocument,
         context: TemplateContext,
+        content: string
     ) {
         const sourceFile = context.node.getSourceFile();
         return diagnostics.map(diag =>
-            this.translateDiagnostic(diag, sourceFile, doc));
+            this.translateDiagnostic(diag, sourceFile, doc, context, content));
     }
 
     private translateDiagnostic(
         diagnostic: vscode.Diagnostic,
         file: ts.SourceFile,
         doc: vscode.TextDocument,
-    ): ts.Diagnostic {
-        const start = this.fromVirtualDocOffset(doc.offsetAt(diagnostic.range.start));
-        const length = this.fromVirtualDocOffset(doc.offsetAt(diagnostic.range.end)) - start
+        context: TemplateContext,
+        content: string
+    ): ts.Diagnostic | undefined {
+        // Make sure returned error is within the real document
+        if (diagnostic.range.start.line === 0
+            || diagnostic.range.start.line >= doc.lineCount
+            || diagnostic.range.start.character >= content.length
+        ) {
+            return undefined;
+        }
+
+        const start = context.toOffset(this.fromVirtualDocPosition(diagnostic.range.start));
+        const length = context.toOffset(this.fromVirtualDocPosition(diagnostic.range.end)) - start;
         const code = typeof diagnostic.code === 'number' ? diagnostic.code : 9999;
         return {
             code,
@@ -143,7 +162,7 @@ export default class VscodeLanguageServiceAdapter implements TemplateStringLangu
     private translateHover(
         hover: vscode.Hover,
         position: ts.LineAndCharacter,
-        context: TemplateContext,
+        context: TemplateContext
     ): ts.QuickInfo {
         const contents: ts.SymbolDisplayPart[] = [];
         const convertPart = (hoverContents: typeof hover.contents) => {

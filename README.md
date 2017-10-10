@@ -134,6 +134,19 @@ sty.button`
 `
 ```
 
+Tags also apply to methods on styled components. This is enabled for `extend` by default:
+
+```js
+import sty from 'styled-components'
+
+const BlueButton = sty.button`
+    color: blue;
+`
+
+const MyFancyBlueButton = BlueButton.extend`
+    border: 10px solid hotpink;
+`
+```
 
 ### Linting
 
@@ -322,6 +335,7 @@ npm run compile
 And then run the end to end tests with the `e2e` script:
 
 ```bash
+(cd e2e && npm install)
 npm run e2e
 ```
 
